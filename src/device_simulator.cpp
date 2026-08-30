@@ -73,6 +73,11 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (port < 1 || port > 65535) {
+        std::cerr << "Port must be between 1 and 65535.\n";
+        return 2;
+    }
+
     if (humidity < 0.0 || humidity > 100.0) {
         std::cerr << "Humidity must be between 0 and 100.\n";
         return 2;
