@@ -29,6 +29,28 @@ bool send_all(int socket, std::span<const std::uint8_t> bytes) {
     return true;
 }
 
+bool receive_ack(int socket_fd, std::uint32_t expected_sequence) {
+    edgelink::StreamParser parser;
+    std::uint8_t buffer[256];
+
+    while (true) {
+        const auto count = ::recv(socket_fd, buffer, sizeof(buffer), 0);
+        if (count <= 0) {
+            return false;
+        }
+
+        const auto messages =
+            parser.push(std::span(buffer, static_cast<std::size_t>(count)));
+
+        for (const auto& received : messages) {
+            if (received.type == edgelink::MessageType::acknowledgment &&
+                received.sequence == expected_sequence) {
+                return true;
+            }
+        }
+    }
+}
+
 edgelink::Message message(edgelink::MessageType type, std::uint32_t sequence,
                           const std::string& payload = {}) {
     return {type, sequence, {payload.begin(), payload.end()}};
@@ -123,6 +145,15 @@ int main(int argc, char** argv) {
             ::close(socket_fd);
             return 1;
         }
+
+        if (!receive_ack(socket_fd, telemetry.sequence)) {
+            std::cerr << "ACK not received for seq=" << telemetry.sequence << '\n';
+            ::close(socket_fd);
+            return 1;
+        }
+
+        std::cout << "ACK received: seq=" << telemetry.sequence << '\n';
+
         std::cout << "Sent: temperature=" << temperature
                   << "C humidity=" << reading.humidity_centi_pct / 100.0 << "%\n";
         std::this_thread::sleep_for(std::chrono::seconds(1));
