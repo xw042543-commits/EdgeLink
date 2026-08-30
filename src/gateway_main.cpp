@@ -46,9 +46,26 @@ void handle_client(int client_socket, sockaddr_in address, edgelink::DeviceRegis
     std::string device_id;
     edgelink::StreamParser parser;
     std::uint8_t buffer[2048];
+    pollfd client_connection{client_socket, POLLIN, 0};
     std::cout << "[connection] accepted peer=" << peer << '\n';
 
     while (running) {
+        const int ready = ::poll(&client_connection, 1, 15000);
+
+        if (ready == 0) {
+            std::cerr << "[timeout] no data from peer=" << peer << '\n';
+            break;
+        }
+
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            std::cerr << "[poll] peer=" << peer
+                      << " error=" << std::strerror(errno) << '\n';
+            break;
+        }
+
         const auto count = ::recv(client_socket, buffer, sizeof(buffer), 0);
         if (count == 0) {
             break;
