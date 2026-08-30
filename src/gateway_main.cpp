@@ -1,6 +1,7 @@
 #include "edgelink/device_registry.hpp"
 #include "edgelink/protocol.hpp"
 
+#include <poll.h>
 #include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
@@ -150,7 +151,12 @@ int main(int argc, char** argv) {
     std::cout << "EdgeLink gateway listening on 0.0.0.0:" << port << '\n';
     std::cout << "Press Ctrl+C to stop.\n";
 
+    pollfd listener{server_socket, POLLIN, 0};
     while (running) {
+        const int ready = ::poll(&listener, 1, 500);
+        if (ready <= 0) {
+            continue;
+        }
         sockaddr_in client_address{};
         socklen_t address_size = sizeof(client_address);
         const int client = ::accept(server_socket, reinterpret_cast<sockaddr*>(&client_address), &address_size);
