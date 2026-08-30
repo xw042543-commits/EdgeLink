@@ -73,6 +73,11 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (temperature < -40.0 || temperature > 125.0) {
+        std::cerr << "Temperature must be between -40 and 125.\n";
+        return 2;
+    }
+
     if (port < 1 || port > 65535) {
         std::cerr << "Port must be between 1 and 65535.\n";
         return 2;
