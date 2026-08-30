@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     }
 
     for (int sample = 0; sample < 10; ++sample) {
-        const double temperature = 24.0 + std::sin(static_cast<double>(sample) / 2.0) * 2.5;
+        const double temperature = 30.0;
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         edgelink::TelemetryPayload reading{
