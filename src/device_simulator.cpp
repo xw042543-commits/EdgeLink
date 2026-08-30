@@ -5,10 +5,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <netinet/in.h>
-#include <span>
 #include <random>
+#include <span>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
@@ -54,9 +55,24 @@ int connect_to(const std::string& host, int port) {
 int main(int argc, char** argv) {
     const std::string device_id = argc > 1 ? argv[1] : "esp32-sim-001";
     const std::string host = argc > 2 ? argv[2] : "127.0.0.1";
-    const int port = argc > 3 ? std::stoi(argv[3]) : 9000;
-    const double temperature = argc > 4 ? std::stod(argv[4]) : 30.0;
-    const double humidity = argc > 5 ? std::stod(argv[5]) : 58.0;
+    int port = 9000;
+    double temperature = 30.0;
+    double humidity = 58.0;
+    try {
+        if (argc > 3) {
+            port = std::stoi(argv[3]);
+        }
+        if (argc > 4) {
+            temperature = std::stod(argv[4]);
+        }
+        if (argc > 5) {
+            humidity = std::stod(argv[5]);
+        }
+    } catch (const std::exception&) {
+        std::cerr << "Port, temperature, and humidity must be numbers.\n";
+        return 2;
+    }
+
     if (humidity < 0.0 || humidity > 100.0) {
         std::cerr << "Humidity must be between 0 and 100.\n";
         return 2;
