@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
     const std::string host = argc > 2 ? argv[2] : "127.0.0.1";
     const int port = argc > 3 ? std::stoi(argv[3]) : 9000;
     const double temperature  = argc > 4 ? std::stod(argv[4]) : 30.0;
+    const double humidity = argc > 5 ? std::stod(argv[5]) : 58.0;
 
     const int socket_fd = connect_to(host, port);
     if (socket_fd < 0) {
@@ -80,7 +81,7 @@ int main(int argc, char** argv) {
         edgelink::TelemetryPayload reading{
             static_cast<std::uint64_t>(now),
             static_cast<std::int16_t>(std::lround(temperature * 100.0)),
-            static_cast<std::uint16_t>((58 + sample % 4) * 100),
+            static_cast<std::uint16_t>(std::lround(humidity * 100.0)),
             3300,
             0,
         };
