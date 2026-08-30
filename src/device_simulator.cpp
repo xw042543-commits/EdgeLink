@@ -8,6 +8,7 @@
 #include <exception>
 #include <iostream>
 #include <netinet/in.h>
+#include <poll.h>
 #include <random>
 #include <span>
 #include <string>
@@ -32,8 +33,14 @@ bool send_all(int socket, std::span<const std::uint8_t> bytes) {
 bool receive_ack(int socket_fd, std::uint32_t expected_sequence) {
     edgelink::StreamParser parser;
     std::uint8_t buffer[256];
+    pollfd ack_socket{socket_fd, POLLIN, 0};
 
     while (true) {
+        const int ready = ::poll(&ack_socket, 1, 2000);
+        if (ready <= 0) {
+            return false;
+        }
+
         const auto count = ::recv(socket_fd, buffer, sizeof(buffer), 0);
         if (count <= 0) {
             return false;
