@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B cmake-build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build with CMake
+        run: cmake --build cmake-build --parallel 2
+
+      - name: Run protocol tests
+        run: ctest --test-dir cmake-build --output-on-failure
+
+      - name: Build Linux epoll targets with Make
+        run: make clean all epoll test
+
+      - name: Run concurrent epoll smoke test
+        run: make smoke
