@@ -18,7 +18,7 @@ $(BUILD_DIR)/edgelink_gateway: $(CORE) src/gateway_main.cpp | $(BUILD_DIR)
 $(BUILD_DIR)/device_simulator: $(CORE) src/device_simulator.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
-$(BUILD_DIR)/epoll_gateway: src/epoll_gateway_main.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/epoll_gateway: src/protocol.cpp src/epoll_gateway_main.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
 $(BUILD_DIR)/protocol_tests: $(CORE) tests/protocol_tests.cpp | $(BUILD_DIR)

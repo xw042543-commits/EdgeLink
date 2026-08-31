@@ -1,3 +1,6 @@
+#include "edgelink/protocol.hpp"
+
+#include <unordered_map>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -7,6 +10,7 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <span>
 
 int main() {
     const int epoll_fd = ::epoll_create1(0);
@@ -70,6 +74,7 @@ int main() {
     std::cout << "listener registered with epoll\n";
 
     std::array<epoll_event, 16> events{};
+    std::unordered_map<int, edgelink::StreamParser> parsers;
 
 
     while (true){
@@ -125,8 +130,9 @@ int main() {
 
             std::cout << "client registered with epoll: fd="
                       << client_socket << '\n';
+                      parsers.try_emplace(client_socket);
         } else {
-            std::array<char, 256> buffer{};
+            std::array<std::uint8_t, 2048> buffer{};
 
             const auto count = ::recv(
                 event_fd,
@@ -137,10 +143,22 @@ int main() {
             if (count <= 0) {
                 std::cout << "client disconnected: fd="
                           << event_fd << '\n';
-                ::close(event_fd);
+                parsers.erase(event_fd);
+                          ::close(event_fd);
             } else {
                 std::cout << "received " << count
                           << " bytes from fd=" << event_fd << '\n';
+                          auto& parser = parsers.at(event_fd);
+
+const auto messages = parser.push(std::span(
+    buffer.data(),
+    static_cast<std::size_t>(count)));
+
+for (const auto& message : messages) {
+    std::cout << "parsed message: type="
+              << edgelink::message_type_name(message.type)
+              << " seq=" << message.sequence << '\n';
+}
             }
         }
     }
