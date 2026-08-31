@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <unordered_map>
 #include <unistd.h>
+#include <vector>
 
 bool set_nonblocking(int socket_fd) {
     const int flags = ::fcntl(socket_fd, F_GETFL, 0);
@@ -27,28 +28,54 @@ bool set_nonblocking(int socket_fd) {
                flags | O_NONBLOCK) == 0;
 }
 
-bool send_all(int socket_fd, std::span<const std::uint8_t> bytes) {
+enum class FlushResult {
+    complete,
+    would_block,
+    error,
+};
+
+FlushResult flush_pending(
+    int socket_fd,
+    std::vector<std::uint8_t>& pending) {
     std::size_t sent = 0;
 
-    while (sent < bytes.size()) {
+    while (sent < pending.size()) {
         const auto count = ::send(
             socket_fd,
-            bytes.data() + sent,
-            bytes.size() - sent,
+            pending.data() + sent,
+            pending.size() - sent,
             MSG_NOSIGNAL);
 
-        if (count < 0 && errno == EINTR) {
+        if (count > 0) {
+            sent += static_cast<std::size_t>(count);
+        } else if (count < 0 && errno == EINTR) {
             continue;
+        } else if (count < 0 &&
+                   (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            pending.erase(pending.begin(), pending.begin() + sent);
+            return FlushResult::would_block;
+        } else {
+            return FlushResult::error;
         }
-
-        if (count <= 0) {
-            return false;
-        }
-
-        sent += static_cast<std::size_t>(count);
     }
 
-    return true;
+    pending.clear();
+    return FlushResult::complete;
+}
+
+bool update_client_events(int epoll_fd, int socket_fd, bool want_write) {
+    epoll_event event{};
+    event.events = EPOLLIN;
+    if (want_write) {
+        event.events |= EPOLLOUT;
+    }
+    event.data.fd = socket_fd;
+
+    return ::epoll_ctl(
+               epoll_fd,
+               EPOLL_CTL_MOD,
+               socket_fd,
+               &event) == 0;
 }
 
 int main() {
@@ -122,6 +149,7 @@ int main() {
     std::array<epoll_event, 16> events{};
     std::unordered_map<int, edgelink::StreamParser> parsers;
     std::unordered_map<int, std::string> device_ids;
+    std::unordered_map<int, std::vector<std::uint8_t>> pending_writes;
 
     while (true) {
         const int ready = ::epoll_wait(
@@ -138,8 +166,9 @@ int main() {
         }
 
         for (int index = 0; index < ready; ++index) {
-            const int event_fd =
-                events[static_cast<std::size_t>(index)].data.fd;
+            const auto& event = events[static_cast<std::size_t>(index)];
+            const int event_fd = event.data.fd;
+            const std::uint32_t event_flags = event.events;
 
             std::cout << "event ready on fd=" << event_fd << '\n';
 
@@ -182,7 +211,9 @@ int main() {
                 std::cout << "client registered with epoll: fd="
                           << client_socket << '\n';
                 parsers.try_emplace(client_socket);
+                pending_writes.try_emplace(client_socket);
             } else {
+                if ((event_flags & EPOLLIN) != 0) {
                 std::array<std::uint8_t, 2048> buffer{};
 
                 const auto count = ::recv(
@@ -196,19 +227,20 @@ int main() {
                               << event_fd << '\n';
                     parsers.erase(event_fd);
                     device_ids.erase(event_fd);
+                    pending_writes.erase(event_fd);
                     ::close(event_fd);
-                } else if (count < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        continue;
-                    }
-
+                    continue;
+                } else if (count < 0 &&
+                           errno != EAGAIN && errno != EWOULDBLOCK) {
                     std::cerr << "recv error: fd="
                               << event_fd << " error="
                               << std::strerror(errno) << '\n';
                     parsers.erase(event_fd);
                     device_ids.erase(event_fd);
+                    pending_writes.erase(event_fd);
                     ::close(event_fd);
-                } else {
+                    continue;
+                } else if (count > 0) {
                     std::cout << "received " << count
                               << " bytes from fd=" << event_fd << '\n';
                     auto& parser = parsers.at(event_fd);
@@ -258,11 +290,53 @@ int main() {
 
                         const auto ack_frame = edgelink::encode(ack);
 
-                        if (send_all(event_fd, ack_frame)) {
-                            std::cout << "ACK sent: seq="
-                                      << message.sequence << '\n';
-                        }
+                        auto& pending = pending_writes.at(event_fd);
+
+                        pending.insert(
+                            pending.end(),
+                            ack_frame.begin(),
+                            ack_frame.end());
+
+                        std::cout << "ACK queued: seq="
+                                  << message.sequence
+                                  << " pending_bytes="
+                                  << pending.size() << '\n';
                     }
+                }
+                }
+
+                auto& pending = pending_writes.at(event_fd);
+                if (!pending.empty()) {
+                    const auto result = flush_pending(event_fd, pending);
+                    if (result == FlushResult::error) {
+                        std::cerr << "send error: fd="
+                                  << event_fd << " error="
+                                  << std::strerror(errno) << '\n';
+                        parsers.erase(event_fd);
+                        device_ids.erase(event_fd);
+                        pending_writes.erase(event_fd);
+                        ::close(event_fd);
+                        continue;
+                    } else if (result == FlushResult::would_block) {
+                        std::cout << "ACK waiting for EPOLLOUT: fd="
+                                  << event_fd
+                                  << " pending_bytes=" << pending.size()
+                                  << '\n';
+                    } else {
+                        std::cout << "ACK queue flushed: fd="
+                                  << event_fd << '\n';
+                    }
+                }
+
+                if (!update_client_events(
+                        epoll_fd, event_fd, !pending.empty())) {
+                    std::cerr << "epoll_ctl update: fd="
+                              << event_fd << " error="
+                              << std::strerror(errno) << '\n';
+                    parsers.erase(event_fd);
+                    device_ids.erase(event_fd);
+                    pending_writes.erase(event_fd);
+                    ::close(event_fd);
                 }
             }
         }
