@@ -151,6 +151,13 @@ int main() {
     std::unordered_map<int, std::string> device_ids;
     std::unordered_map<int, std::vector<std::uint8_t>> pending_writes;
 
+    const auto close_client = [&](int socket_fd) {
+        parsers.erase(socket_fd);
+        device_ids.erase(socket_fd);
+        pending_writes.erase(socket_fd);
+        ::close(socket_fd);
+    };
+
     while (true) {
         const int ready = ::epoll_wait(
             epoll_fd,
@@ -213,96 +220,107 @@ int main() {
                 parsers.try_emplace(client_socket);
                 pending_writes.try_emplace(client_socket);
             } else {
+                bool disconnected = false;
+
                 if ((event_flags & EPOLLIN) != 0) {
-                std::array<std::uint8_t, 2048> buffer{};
+                    std::array<std::uint8_t, 2048> buffer{};
 
-                const auto count = ::recv(
-                    event_fd,
-                    buffer.data(),
-                    buffer.size(),
-                    0);
+                    while (true) {
+                        const auto count = ::recv(
+                            event_fd,
+                            buffer.data(),
+                            buffer.size(),
+                            0);
 
-                if (count == 0) {
-                    std::cout << "client disconnected: fd="
-                              << event_fd << '\n';
-                    parsers.erase(event_fd);
-                    device_ids.erase(event_fd);
-                    pending_writes.erase(event_fd);
-                    ::close(event_fd);
-                    continue;
-                } else if (count < 0 &&
-                           errno != EAGAIN && errno != EWOULDBLOCK) {
-                    std::cerr << "recv error: fd="
-                              << event_fd << " error="
-                              << std::strerror(errno) << '\n';
-                    parsers.erase(event_fd);
-                    device_ids.erase(event_fd);
-                    pending_writes.erase(event_fd);
-                    ::close(event_fd);
-                    continue;
-                } else if (count > 0) {
-                    std::cout << "received " << count
-                              << " bytes from fd=" << event_fd << '\n';
-                    auto& parser = parsers.at(event_fd);
-
-                    const auto messages = parser.push(std::span(
-                        buffer.data(),
-                        static_cast<std::size_t>(count)));
-
-                    for (const auto& message : messages) {
-                        std::cout << "parsed message: type="
-                                  << edgelink::message_type_name(message.type)
-                                  << " seq=" << message.sequence << '\n';
-
-                        if (message.type == edgelink::MessageType::hello) {
-                            const auto hello =
-                                edgelink::decode_hello(message.payload);
-
-                            if (hello.has_value()) {
-                                device_ids[event_fd] = hello->device_id;
-
-                                std::cout << "device online: id="
-                                          << hello->device_id
-                                          << " fd=" << event_fd << '\n';
-                            }
-                        } else if (message.type ==
-                                   edgelink::MessageType::telemetry) {
-                            const auto reading =
-                                edgelink::decode_telemetry(message.payload);
-                            const auto device = device_ids.find(event_fd);
-
-                            if (reading.has_value() &&
-                                device != device_ids.end()) {
-                                std::cout << "telemetry: id="
-                                          << device->second
-                                          << " temperature="
-                                          << reading->temperature_centi_c / 100.0
-                                          << "C humidity="
-                                          << reading->humidity_centi_pct / 100.0
-                                          << "%\n";
-                            }
+                        if (count == 0) {
+                            std::cout << "client disconnected: fd="
+                                      << event_fd << '\n';
+                            close_client(event_fd);
+                            disconnected = true;
+                            break;
                         }
 
-                        const edgelink::Message ack{
-                            edgelink::MessageType::acknowledgment,
-                            message.sequence,
-                            {}};
+                        if (count < 0) {
+                            if (errno == EINTR) {
+                                continue;
+                            }
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                break;
+                            }
 
-                        const auto ack_frame = edgelink::encode(ack);
+                            std::cerr << "recv error: fd="
+                                      << event_fd << " error="
+                                      << std::strerror(errno) << '\n';
+                            close_client(event_fd);
+                            disconnected = true;
+                            break;
+                        }
 
-                        auto& pending = pending_writes.at(event_fd);
+                        std::cout << "received " << count
+                                  << " bytes from fd=" << event_fd << '\n';
+                        auto& parser = parsers.at(event_fd);
 
-                        pending.insert(
-                            pending.end(),
-                            ack_frame.begin(),
-                            ack_frame.end());
+                        const auto messages = parser.push(std::span(
+                            buffer.data(),
+                            static_cast<std::size_t>(count)));
 
-                        std::cout << "ACK queued: seq="
-                                  << message.sequence
-                                  << " pending_bytes="
-                                  << pending.size() << '\n';
+                        for (const auto& message : messages) {
+                            std::cout << "parsed message: type="
+                                      << edgelink::message_type_name(message.type)
+                                      << " seq=" << message.sequence << '\n';
+
+                            if (message.type == edgelink::MessageType::hello) {
+                                const auto hello =
+                                    edgelink::decode_hello(message.payload);
+
+                                if (hello.has_value()) {
+                                    device_ids[event_fd] = hello->device_id;
+
+                                    std::cout << "device online: id="
+                                              << hello->device_id
+                                              << " fd=" << event_fd << '\n';
+                                }
+                            } else if (message.type ==
+                                       edgelink::MessageType::telemetry) {
+                                const auto reading =
+                                    edgelink::decode_telemetry(message.payload);
+                                const auto device = device_ids.find(event_fd);
+
+                                if (reading.has_value() &&
+                                    device != device_ids.end()) {
+                                    std::cout << "telemetry: id="
+                                              << device->second
+                                              << " temperature="
+                                              << reading->temperature_centi_c / 100.0
+                                              << "C humidity="
+                                              << reading->humidity_centi_pct / 100.0
+                                              << "%\n";
+                                }
+                            }
+
+                            const edgelink::Message ack{
+                                edgelink::MessageType::acknowledgment,
+                                message.sequence,
+                                {}};
+
+                            const auto ack_frame = edgelink::encode(ack);
+                            auto& pending = pending_writes.at(event_fd);
+
+                            pending.insert(
+                                pending.end(),
+                                ack_frame.begin(),
+                                ack_frame.end());
+
+                            std::cout << "ACK queued: seq="
+                                      << message.sequence
+                                      << " pending_bytes="
+                                      << pending.size() << '\n';
+                        }
                     }
                 }
+
+                if (disconnected) {
+                    continue;
                 }
 
                 auto& pending = pending_writes.at(event_fd);
@@ -312,10 +330,7 @@ int main() {
                         std::cerr << "send error: fd="
                                   << event_fd << " error="
                                   << std::strerror(errno) << '\n';
-                        parsers.erase(event_fd);
-                        device_ids.erase(event_fd);
-                        pending_writes.erase(event_fd);
-                        ::close(event_fd);
+                        close_client(event_fd);
                         continue;
                     } else if (result == FlushResult::would_block) {
                         std::cout << "ACK waiting for EPOLLOUT: fd="
@@ -333,10 +348,7 @@ int main() {
                     std::cerr << "epoll_ctl update: fd="
                               << event_fd << " error="
                               << std::strerror(errno) << '\n';
-                    parsers.erase(event_fd);
-                    device_ids.erase(event_fd);
-                    pending_writes.erase(event_fd);
-                    ::close(event_fd);
+                    close_client(event_fd);
                 }
             }
         }
