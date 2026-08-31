@@ -180,6 +180,18 @@ int main() {
                         std::cout << "parsed message: type="
                                   << edgelink::message_type_name(message.type)
                                   << " seq=" << message.sequence << '\n';
+                                  if (message.type == edgelink::MessageType::telemetry) {
+    const auto reading =
+        edgelink::decode_telemetry(message.payload);
+
+    if (reading.has_value()) {
+        std::cout << "temperature="
+                  << reading->temperature_centi_c / 100.0
+                  << "C humidity="
+                  << reading->humidity_centi_pct / 100.0
+                  << "%\n";
+    }
+}
 
                         const edgelink::Message ack{
                             edgelink::MessageType::acknowledgment,
