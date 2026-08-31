@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <netinet/in.h>
 #include <span>
@@ -12,6 +13,19 @@
 #include <sys/socket.h>
 #include <unordered_map>
 #include <unistd.h>
+
+bool set_nonblocking(int socket_fd) {
+    const int flags = ::fcntl(socket_fd, F_GETFL, 0);
+
+    if (flags < 0) {
+        return false;
+    }
+
+    return ::fcntl(
+               socket_fd,
+               F_SETFL,
+               flags | O_NONBLOCK) == 0;
+}
 
 bool send_all(int socket_fd, std::span<const std::uint8_t> bytes) {
     std::size_t sent = 0;
@@ -49,6 +63,13 @@ int main() {
 
     if (server_socket < 0) {
         std::cerr << "socket: " << std::strerror(errno) << '\n';
+        ::close(epoll_fd);
+        return 1;
+    }
+    if (!set_nonblocking(server_socket)) {
+        std::cerr << "set_nonblocking: "
+                  << std::strerror(errno) << '\n';
+        ::close(server_socket);
         ::close(epoll_fd);
         return 1;
     }
