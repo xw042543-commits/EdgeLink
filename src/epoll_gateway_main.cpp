@@ -1,16 +1,40 @@
 #include "edgelink/protocol.hpp"
 
-#include <unordered_map>
 #include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <span>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <unordered_map>
 #include <unistd.h>
-#include <span>
+
+bool send_all(int socket_fd, std::span<const std::uint8_t> bytes) {
+    std::size_t sent = 0;
+
+    while (sent < bytes.size()) {
+        const auto count = ::send(
+            socket_fd,
+            bytes.data() + sent,
+            bytes.size() - sent,
+            MSG_NOSIGNAL);
+
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+
+        if (count <= 0) {
+            return false;
+        }
+
+        sent += static_cast<std::size_t>(count);
+    }
+
+    return true;
+}
 
 int main() {
     const int epoll_fd = ::epoll_create1(0);
@@ -76,93 +100,103 @@ int main() {
     std::array<epoll_event, 16> events{};
     std::unordered_map<int, edgelink::StreamParser> parsers;
 
+    while (true) {
+        const int ready = ::epoll_wait(
+            epoll_fd,
+            events.data(),
+            static_cast<int>(events.size()),
+            -1);
 
-    while (true){
+        if (ready < 0) {
+            std::cerr << "epoll_wait: " << std::strerror(errno) << '\n';
+            ::close(server_socket);
+            ::close(epoll_fd);
+            return 1;
+        }
 
-    const int ready = ::epoll_wait(
-        epoll_fd,
-        events.data(),
-        static_cast<int>(events.size()),
-        -1);
+        for (int index = 0; index < ready; ++index) {
+            const int event_fd =
+                events[static_cast<std::size_t>(index)].data.fd;
 
-    if (ready < 0) {
-        std::cerr << "epoll_wait: " << std::strerror(errno) << '\n';
-        ::close(server_socket);
-        ::close(epoll_fd);
-        return 1;
-    }
+            std::cout << "event ready on fd=" << event_fd << '\n';
 
-    for (int index = 0; index < ready; ++index) {
-        const int event_fd =
-            events[static_cast<std::size_t>(index)].data.fd;
+            if (event_fd == server_socket) {
+                const int client_socket =
+                    ::accept(server_socket, nullptr, nullptr);
 
-        std::cout << "event ready on fd=" << event_fd << '\n';
+                if (client_socket < 0) {
+                    std::cerr << "accept: " << std::strerror(errno) << '\n';
+                    ::close(server_socket);
+                    ::close(epoll_fd);
+                    return 1;
+                }
 
-        if (event_fd == server_socket) {
-            const int client_socket =
-                ::accept(server_socket, nullptr, nullptr);
+                std::cout << "accepted client socket: fd="
+                          << client_socket << '\n';
 
-            if (client_socket < 0) {
-                std::cerr << "accept: " << std::strerror(errno) << '\n';
-                ::close(server_socket);
-                ::close(epoll_fd);
-                return 1;
-            }
+                epoll_event client_event{};
+                client_event.events = EPOLLIN;
+                client_event.data.fd = client_socket;
 
-            std::cout << "accepted client socket: fd="
-                      << client_socket << '\n';
+                if (::epoll_ctl(epoll_fd,
+                                EPOLL_CTL_ADD,
+                                client_socket,
+                                &client_event) < 0) {
+                    std::cerr << "epoll_ctl client: "
+                              << std::strerror(errno) << '\n';
+                    ::close(client_socket);
+                    ::close(server_socket);
+                    ::close(epoll_fd);
+                    return 1;
+                }
 
-            epoll_event client_event{};
-            client_event.events = EPOLLIN;
-            client_event.data.fd = client_socket;
-
-            if (::epoll_ctl(epoll_fd,
-                            EPOLL_CTL_ADD,
-                            client_socket,
-                            &client_event) < 0) {
-                std::cerr << "epoll_ctl client: "
-                          << std::strerror(errno) << '\n';
-                ::close(client_socket);
-                ::close(server_socket);
-                ::close(epoll_fd);
-                return 1;
-            }
-
-            std::cout << "client registered with epoll: fd="
-                      << client_socket << '\n';
-                      parsers.try_emplace(client_socket);
-        } else {
-            std::array<std::uint8_t, 2048> buffer{};
-
-            const auto count = ::recv(
-                event_fd,
-                buffer.data(),
-                buffer.size(),
-                0);
-
-            if (count <= 0) {
-                std::cout << "client disconnected: fd="
-                          << event_fd << '\n';
-                parsers.erase(event_fd);
-                          ::close(event_fd);
+                std::cout << "client registered with epoll: fd="
+                          << client_socket << '\n';
+                parsers.try_emplace(client_socket);
             } else {
-                std::cout << "received " << count
-                          << " bytes from fd=" << event_fd << '\n';
-                          auto& parser = parsers.at(event_fd);
+                std::array<std::uint8_t, 2048> buffer{};
 
-const auto messages = parser.push(std::span(
-    buffer.data(),
-    static_cast<std::size_t>(count)));
+                const auto count = ::recv(
+                    event_fd,
+                    buffer.data(),
+                    buffer.size(),
+                    0);
 
-for (const auto& message : messages) {
-    std::cout << "parsed message: type="
-              << edgelink::message_type_name(message.type)
-              << " seq=" << message.sequence << '\n';
-}
+                if (count <= 0) {
+                    std::cout << "client disconnected: fd="
+                              << event_fd << '\n';
+                    parsers.erase(event_fd);
+                    ::close(event_fd);
+                } else {
+                    std::cout << "received " << count
+                              << " bytes from fd=" << event_fd << '\n';
+                    auto& parser = parsers.at(event_fd);
+
+                    const auto messages = parser.push(std::span(
+                        buffer.data(),
+                        static_cast<std::size_t>(count)));
+
+                    for (const auto& message : messages) {
+                        std::cout << "parsed message: type="
+                                  << edgelink::message_type_name(message.type)
+                                  << " seq=" << message.sequence << '\n';
+
+                        const edgelink::Message ack{
+                            edgelink::MessageType::acknowledgment,
+                            message.sequence,
+                            {}};
+
+                        const auto ack_frame = edgelink::encode(ack);
+
+                        if (send_all(event_fd, ack_frame)) {
+                            std::cout << "ACK sent: seq="
+                                      << message.sequence << '\n';
+                        }
+                    }
+                }
             }
         }
     }
-}
 
     ::close(server_socket);
     ::close(epoll_fd);
