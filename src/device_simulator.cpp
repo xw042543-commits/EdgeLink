@@ -166,21 +166,27 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    const auto heartbeat = message(edgelink::MessageType::heartbeat, sequence);
+    for (int heartbeat_count = 0; heartbeat_count < 3; ++heartbeat_count) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    if (!send_all(socket_fd, edgelink::encode(heartbeat))) {
-        std::cerr << "Failed to send heartbeat.\n";
-        ::close(socket_fd);
-        return 1;
+        const auto heartbeat =
+            message(edgelink::MessageType::heartbeat, sequence++);
+
+        if (!send_all(socket_fd, edgelink::encode(heartbeat))) {
+            std::cerr << "Failed to send heartbeat.\n";
+            ::close(socket_fd);
+            return 1;
+        }
+
+        if (!receive_ack(socket_fd, heartbeat.sequence)) {
+            std::cerr << "Heartbeat ACK not received.\n";
+            ::close(socket_fd);
+            return 1;
+        }
+
+        std::cout << "Heartbeat acknowledged: seq="
+                  << heartbeat.sequence << '\n';
     }
-
-    if (!receive_ack(socket_fd, heartbeat.sequence)) {
-        std::cerr << "Heartbeat ACK not received.\n";
-        ::close(socket_fd);
-        return 1;
-    }
-
-    std::cout << "Heartbeat acknowledged: seq=" << heartbeat.sequence << '\n';
     ::close(socket_fd);
     std::cout << "Simulation complete.\n";
 }
