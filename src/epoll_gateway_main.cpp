@@ -49,9 +49,24 @@ int main() {
         return 1;
     }
 
+    epoll_event listener_event{};
+    listener_event.events = EPOLLIN;
+    listener_event.data.fd = server_socket;
+
+    if (::epoll_ctl(epoll_fd,
+                    EPOLL_CTL_ADD,
+                    server_socket,
+                    &listener_event) < 0) {
+        std::cerr << "epoll_ctl: " << std::strerror(errno) << '\n';
+        ::close(server_socket);
+        ::close(epoll_fd);
+        return 1;
+    }
+
     std::cout << "epoll instance created: fd=" << epoll_fd << '\n';
     std::cout << "server socket listening on 0.0.0.0:"
               << port << " fd=" << server_socket << '\n';
+    std::cout << "listener registered with epoll\n";
 
     ::close(server_socket);
     ::close(epoll_fd);
