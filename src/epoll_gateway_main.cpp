@@ -85,9 +85,27 @@ int main() {
     }
 
     for (int index = 0; index < ready; ++index) {
-        std::cout << "event ready on fd="
-                  << events[static_cast<std::size_t>(index)].data.fd
-                  << '\n';
+        const int event_fd =
+            events[static_cast<std::size_t>(index)].data.fd;
+
+        std::cout << "event ready on fd=" << event_fd << '\n';
+
+        if (event_fd == server_socket) {
+            const int client_socket =
+                ::accept(server_socket, nullptr, nullptr);
+
+            if (client_socket < 0) {
+                std::cerr << "accept: " << std::strerror(errno) << '\n';
+                ::close(server_socket);
+                ::close(epoll_fd);
+                return 1;
+            }
+
+            std::cout << "accepted client socket: fd="
+                      << client_socket << '\n';
+
+            ::close(client_socket);
+        }
     }
 
     ::close(server_socket);
