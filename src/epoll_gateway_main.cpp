@@ -1,3 +1,4 @@
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -67,6 +68,27 @@ int main() {
     std::cout << "server socket listening on 0.0.0.0:"
               << port << " fd=" << server_socket << '\n';
     std::cout << "listener registered with epoll\n";
+
+    std::array<epoll_event, 16> events{};
+
+    const int ready = ::epoll_wait(
+        epoll_fd,
+        events.data(),
+        static_cast<int>(events.size()),
+        -1);
+
+    if (ready < 0) {
+        std::cerr << "epoll_wait: " << std::strerror(errno) << '\n';
+        ::close(server_socket);
+        ::close(epoll_fd);
+        return 1;
+    }
+
+    for (int index = 0; index < ready; ++index) {
+        std::cout << "event ready on fd="
+                  << events[static_cast<std::size_t>(index)].data.fd
+                  << '\n';
+    }
 
     ::close(server_socket);
     ::close(epoll_fd);
