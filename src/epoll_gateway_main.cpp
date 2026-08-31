@@ -7,11 +7,11 @@
 #include <iostream>
 #include <netinet/in.h>
 #include <span>
+#include <string>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unordered_map>
 #include <unistd.h>
-#include <string>
 
 bool send_all(int socket_fd, std::span<const std::uint8_t> bytes) {
     std::size_t sent = 0;
@@ -183,41 +183,35 @@ int main() {
                         std::cout << "parsed message: type="
                                   << edgelink::message_type_name(message.type)
                                   << " seq=" << message.sequence << '\n';
-                                  if (message.type == edgelink::MessageType::telemetry) {
-    const auto reading =
-        edgelink::decode_telemetry(message.payload);
 
-    if (reading.has_value()) {
-        if (message.type == edgelink::MessageType::hello) {
-    const auto hello = edgelink::decode_hello(message.payload);
+                        if (message.type == edgelink::MessageType::hello) {
+                            const auto hello =
+                                edgelink::decode_hello(message.payload);
 
-    if (hello.has_value()) {
-        device_ids[event_fd] = hello->device_id;
+                            if (hello.has_value()) {
+                                device_ids[event_fd] = hello->device_id;
 
-        std::cout << "device online: id="
-                  << hello->device_id
-                  << " fd=" << event_fd << '\n';
-    }
-}
-        std::cout << "temperature="
-                  << reading->temperature_centi_c / 100.0
-                  if (message.type == edgelink::MessageType::telemetry) {
-    const auto reading =
-        edgelink::decode_telemetry(message.payload);
-    const auto device = device_ids.find(event_fd);
+                                std::cout << "device online: id="
+                                          << hello->device_id
+                                          << " fd=" << event_fd << '\n';
+                            }
+                        } else if (message.type ==
+                                   edgelink::MessageType::telemetry) {
+                            const auto reading =
+                                edgelink::decode_telemetry(message.payload);
+                            const auto device = device_ids.find(event_fd);
 
-    if (reading.has_value() && device != device_ids.end()) {
-        std::cout << "telemetry: id="
-                  << device->second
-                  << " temperature="
-                  << reading->temperature_centi_c / 100.0
-                  << "C humidity="
-                  << reading->humidity_centi_pct / 100.0
-                  << "%\n";
-    }
-}
-    }
-}
+                            if (reading.has_value() &&
+                                device != device_ids.end()) {
+                                std::cout << "telemetry: id="
+                                          << device->second
+                                          << " temperature="
+                                          << reading->temperature_centi_c / 100.0
+                                          << "C humidity="
+                                          << reading->humidity_centi_pct / 100.0
+                                          << "%\n";
+                            }
+                        }
 
                         const edgelink::Message ack{
                             edgelink::MessageType::acknowledgment,
