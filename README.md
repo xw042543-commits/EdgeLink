@@ -17,6 +17,10 @@ wire protocol without changing the gateway architecture.
 - Thread-safe device registry
 - HELLO, TELEMETRY, HEARTBEAT, and ACK messages
 - Protocol tests and a deterministic ESP32-style simulator
+- ACK-based telemetry delivery confirmation
+- Periodic heartbeats with acknowledgment checking
+- Inactive connection timeouts and clean signal handling
+- Initial connection retries and automatic reconnection after connection loss
 
 ## Architecture
 
@@ -47,6 +51,20 @@ The dependency-free fallback Makefile is useful on machines without CMake:
 make
 make test
 ```
+
+### Verified environment
+
+EdgeLink has been compiled and tested on:
+
+- Ubuntu Linux ARM64 (`aarch64`) with GCC and GNU Make
+- macOS ARM64 with Apple Clang
+
+Validation includes:
+
+- Clean compilation with C++20 warnings enabled
+- All protocol tests passing
+- End-to-end gateway and simulator communication
+- Telemetry acknowledgments and periodic heartbeat acknowledgments
 
 ## Run the demo
 
@@ -81,9 +99,14 @@ All integer fields use network byte order.
 
 ## Roadmap
 
-1. Add heartbeat timeouts and graceful session shutdown.
-2. Add bounded worker queues, structured logging, and runtime metrics.
+1. Replace thread-per-connection sessions with Linux `epoll` and bounded worker queues.
+2. Add a load generator, structured logging, runtime metrics, and performance benchmarks.
 3. Store telemetry in SQLite and expose a small status API.
-4. Port the protocol encoder to ESP32 and test on real hardware.
-5. Add Linux CI, sanitizers, load tests, and packet-loss fault injection.
+4. Port the protocol encoder to ESP32 and test with real temperature and humidity sensors.
+5. Add Linux CI, sanitizers, and packet-loss fault injection.
 
+## Ubuntu validation
+
+![Gateway receiving telemetry on Ubuntu](docs/images/ubuntu-gateway.png)
+
+![Device simulator receiving ACKs on Ubuntu](docs/images/ubuntu-simulator.png)
