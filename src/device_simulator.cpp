@@ -117,10 +117,24 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const int socket_fd = connect_to(host, port);
+    int socket_fd = -1;
+
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        socket_fd = connect_to(host, port);
+
+        if (socket_fd >= 0) {
+            break;
+        }
+
+        std::cerr << "Connection attempt " << attempt << " failed.\n";
+
+        if (attempt < 3) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+    }
+
     if (socket_fd < 0) {
-        std::cerr << "Cannot connect to " << host << ':' << port << ": "
-                  << std::strerror(errno) << '\n';
+        std::cerr << "Cannot connect to " << host << ':' << port << '\n';
         return 1;
     }
 
