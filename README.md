@@ -21,6 +21,11 @@ wire protocol without changing the gateway architecture.
 - Periodic heartbeats with acknowledgment checking
 - Inactive connection timeouts and clean signal handling
 - Initial connection retries and automatic reconnection after connection loss
+- Linux `epoll` gateway with non-blocking client sockets
+- Per-connection input parsers and queued non-blocking ACK writes
+- Inactivity cleanup and graceful `SIGINT`/`SIGTERM` shutdown
+- Concurrent load generator with throughput and delivery statistics
+- Ubuntu CI with an automated multi-device smoke test
 
 ## Architecture
 
@@ -28,12 +33,17 @@ wire protocol without changing the gateway architecture.
 Device simulator / ESP32
           │ TCP binary frames
           ▼
-  EdgeLink gateway
-  ├── stream parser
-  ├── CRC validation
-  ├── session handling
-  └── device registry
+  Linux epoll gateway
+  ├── one non-blocking event loop
+  ├── parser state per connection
+  ├── CRC and payload validation
+  ├── queued ACK output per connection
+  └── identity and inactivity tracking
 ```
+
+The original portable gateway remains available for macOS development. The Linux
+`epoll_gateway` is the scalable v0.2 implementation. See
+[`docs/epoll-design.md`](docs/epoll-design.md) for the event flow and design decisions.
 
 ## Build
 
@@ -52,6 +62,12 @@ make
 make test
 ```
 
+Build the Linux-only epoll gateway:
+
+```bash
+make epoll
+```
+
 ### Verified environment
 
 EdgeLink has been compiled and tested on:
@@ -66,22 +82,39 @@ Validation includes:
 - End-to-end gateway and simulator communication
 - Telemetry acknowledgments and periodic heartbeat acknowledgments
 
-## Run the demo
+## Run the epoll demo on Linux
 
 Terminal 1:
 
 ```bash
-./build/edgelink_gateway 9000
+./build/epoll_gateway 9040
 ```
 
 Terminal 2:
 
 ```bash
-./build/device_simulator esp32-sim-001 127.0.0.1 9000
+./build/device_simulator esp32-sim-001 127.0.0.1 9040 28.5 65.2
 ```
 
 Start more simulator processes with different device IDs to demonstrate concurrent
 connections.
+
+## Run a concurrent load test
+
+The following command starts 100 simulated devices. Each device completes HELLO and
+sends 100 acknowledged telemetry messages:
+
+```bash
+./build/load_generator 127.0.0.1 9040 100 100
+```
+
+The summary reports connected clients, acknowledged telemetry messages, elapsed time,
+and application-level messages per second. A smaller automated smoke test is available
+on Linux:
+
+```bash
+make smoke
+```
 
 ## Wire format
 
@@ -97,13 +130,17 @@ All integer fields use network byte order.
 | CRC-32 | 4 | Header-without-CRC plus payload |
 | Payload | variable | Message content |
 
-## Roadmap
+## Status and roadmap
 
-1. Replace thread-per-connection sessions with Linux `epoll` and bounded worker queues.
-2. Add a load generator, structured logging, runtime metrics, and performance benchmarks.
-3. Store telemetry in SQLite and expose a small status API.
-4. Port the protocol encoder to ESP32 and test with real temperature and humidity sensors.
-5. Add Linux CI, sanitizers, and packet-loss fault injection.
+Version 0.2 completes the Linux `epoll` event loop, non-blocking input/output queues,
+connection timeouts, concurrent load generation, and Linux CI.
+
+Future milestones:
+
+1. Add a bounded worker queue, structured logging, and richer runtime metrics.
+2. Store telemetry in SQLite and expose a small status API.
+3. Port the protocol encoder to ESP32 and test with a real temperature sensor.
+4. Add sanitizers, packet-loss fault injection, and reproducible benchmark reports.
 
 ## Ubuntu validation
 
