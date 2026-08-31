@@ -79,6 +79,26 @@ int connect_to(const std::string& host, int port) {
     return socket_fd;
 }
 
+int connect_with_retry(const std::string& host, int port) {
+    int socket_fd = -1;
+
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        socket_fd = connect_to(host, port);
+
+        if (socket_fd >= 0) {
+            return socket_fd;
+        }
+
+        std::cerr << "Connection attempt " << attempt << " failed.\n";
+
+        if (attempt < 3) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+    }
+
+    return -1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -117,21 +137,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    int socket_fd = -1;
-
-    for (int attempt = 1; attempt <= 3; ++attempt) {
-        socket_fd = connect_to(host, port);
-
-        if (socket_fd >= 0) {
-            break;
-        }
-
-        std::cerr << "Connection attempt " << attempt << " failed.\n";
-
-        if (attempt < 3) {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-        }
-    }
+    int socket_fd = connect_with_retry(host, port);
 
     if (socket_fd < 0) {
         std::cerr << "Cannot connect to " << host << ':' << port << '\n';
