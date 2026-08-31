@@ -71,6 +71,9 @@ int main() {
 
     std::array<epoll_event, 16> events{};
 
+
+    while (true){
+
     const int ready = ::epoll_wait(
         epoll_fd,
         events.data(),
@@ -104,9 +107,44 @@ int main() {
             std::cout << "accepted client socket: fd="
                       << client_socket << '\n';
 
-            ::close(client_socket);
+            epoll_event client_event{};
+            client_event.events = EPOLLIN;
+            client_event.data.fd = client_socket;
+
+            if (::epoll_ctl(epoll_fd,
+                            EPOLL_CTL_ADD,
+                            client_socket,
+                            &client_event) < 0) {
+                std::cerr << "epoll_ctl client: "
+                          << std::strerror(errno) << '\n';
+                ::close(client_socket);
+                ::close(server_socket);
+                ::close(epoll_fd);
+                return 1;
+            }
+
+            std::cout << "client registered with epoll: fd="
+                      << client_socket << '\n';
+        } else {
+            std::array<char, 256> buffer{};
+
+            const auto count = ::recv(
+                event_fd,
+                buffer.data(),
+                buffer.size(),
+                0);
+
+            if (count <= 0) {
+                std::cout << "client disconnected: fd="
+                          << event_fd << '\n';
+                ::close(event_fd);
+            } else {
+                std::cout << "received " << count
+                          << " bytes from fd=" << event_fd << '\n';
+            }
         }
     }
+}
 
     ::close(server_socket);
     ::close(epoll_fd);
