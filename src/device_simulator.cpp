@@ -1,5 +1,6 @@
 #include "edgelink/protocol.hpp"
 
+#include <csignal>
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
@@ -80,9 +81,10 @@ int connect_to(const std::string& host, int port) {
 }
 
 int connect_with_retry(const std::string& host, int port) {
+    constexpr int max_attempys = 10;
     int socket_fd = -1;
 
-    for (int attempt = 1; attempt <= 3; ++attempt) {
+    for (int attempt = 1; attempt <= max_attempys; ++attempt) {
         socket_fd = connect_to(host, port);
 
         if (socket_fd >= 0) {
@@ -91,7 +93,7 @@ int connect_with_retry(const std::string& host, int port) {
 
         std::cerr << "Connection attempt " << attempt << " failed.\n";
 
-        if (attempt < 3) {
+        if (attempt < max_attempys) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }
     }
@@ -99,9 +101,23 @@ int connect_with_retry(const std::string& host, int port) {
     return -1;
 }
 
+bool send_hello(int socket_fd,
+                std::uint64_t session_id,
+                const std::string& device_id,
+                std::uint32_t& sequence) {
+    edgelink::Message hello{
+        edgelink::MessageType::hello,
+        sequence++,
+        edgelink::encode_hello({session_id, device_id}),
+    };
+
+    return send_all(socket_fd, edgelink::encode(hello));
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
+    std::signal(SIGPIPE, SIG_IGN);
     const std::string device_id = argc > 1 ? argv[1] : "esp32-sim-001";
     const std::string host = argc > 2 ? argv[2] : "127.0.0.1";
     int port = 9000;
@@ -148,9 +164,9 @@ int main(int argc, char** argv) {
     std::uint32_t sequence = 1;
     std::random_device random;
     const auto session_id = (static_cast<std::uint64_t>(random()) << 32U) | random();
-    edgelink::Message hello{edgelink::MessageType::hello, sequence++,
-                            edgelink::encode_hello({session_id, device_id})};
-    if (!send_all(socket_fd, edgelink::encode(hello))) {
+    if (!send_hello(socket_fd, session_id, device_id, sequence)) {
+        std::cerr << "Failed to send HELLO.\n";
+        ::close(socket_fd);
         return 1;
     }
 
@@ -167,16 +183,34 @@ int main(int argc, char** argv) {
         edgelink::Message telemetry{edgelink::MessageType::telemetry, sequence++,
                                      edgelink::encode_telemetry(reading)};
         const auto frame = edgelink::encode(telemetry);
-        if (!send_all(socket_fd, frame)) {
-            std::cerr << "Connection lost.\n";
-            ::close(socket_fd);
-            return 1;
+        bool delivered = send_all(socket_fd, frame);
+
+        if (delivered) {
+            delivered = receive_ack(socket_fd, telemetry.sequence);
         }
 
-        if (!receive_ack(socket_fd, telemetry.sequence)) {
-            std::cerr << "ACK not received for seq=" << telemetry.sequence << '\n';
+        if (!delivered) {
+            std::cerr << "Delivery failed for seq=" << telemetry.sequence
+                      << ". Reconnecting.\n";
+
             ::close(socket_fd);
-            return 1;
+            socket_fd = connect_with_retry(host, port);
+
+            if (socket_fd < 0) {
+                std::cerr << "Reconnection failed.\n";
+                return 1;
+            }
+
+            if (!send_hello(socket_fd, session_id, device_id, sequence)) {
+                std::cerr << "Failed to send HELLO after reconnection.\n";
+                ::close(socket_fd);
+                return 1;
+            }
+
+            std::cout << "Reconnected as " << device_id << '\n';
+
+            --sample;
+            continue;
         }
 
         std::cout << "ACK received: seq=" << telemetry.sequence << '\n';
