@@ -153,6 +153,12 @@ int main() {
                     ::close(epoll_fd);
                     return 1;
                 }
+                if (!set_nonblocking(client_socket)) {
+                    std::cerr << "set_nonblocking client: "
+                              << std::strerror(errno) << '\n';
+                    ::close(client_socket);
+                    continue;
+                }
 
                 std::cout << "accepted client socket: fd="
                           << client_socket << '\n';
@@ -185,9 +191,20 @@ int main() {
                     buffer.size(),
                     0);
 
-                if (count <= 0) {
+                if (count == 0) {
                     std::cout << "client disconnected: fd="
                               << event_fd << '\n';
+                    parsers.erase(event_fd);
+                    device_ids.erase(event_fd);
+                    ::close(event_fd);
+                } else if (count < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        continue;
+                    }
+
+                    std::cerr << "recv error: fd="
+                              << event_fd << " error="
+                              << std::strerror(errno) << '\n';
                     parsers.erase(event_fd);
                     device_ids.erase(event_fd);
                     ::close(event_fd);
