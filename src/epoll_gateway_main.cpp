@@ -1,19 +1,48 @@
 #include "edgelink/protocol.hpp"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
 #include <netinet/in.h>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unordered_map>
 #include <unistd.h>
 #include <vector>
+
+namespace {
+
+std::atomic_bool running{true};
+
+void stop_server(int) {
+    running = false;
+}
+
+int parse_port(int argc, char** argv) {
+    if (argc < 2) {
+        return 9040;
+    }
+
+    try {
+        const int port = std::stoi(argv[1]);
+        if (port < 1 || port > 65535) {
+            throw std::out_of_range("port");
+        }
+        return port;
+    } catch (const std::exception&) {
+        std::cerr << "Usage: epoll_gateway [port]\n";
+        return -1;
+    }
+}
 
 bool set_nonblocking(int socket_fd) {
     const int flags = ::fcntl(socket_fd, F_GETFL, 0);
@@ -65,7 +94,7 @@ FlushResult flush_pending(
 
 bool update_client_events(int epoll_fd, int socket_fd, bool want_write) {
     epoll_event event{};
-    event.events = EPOLLIN;
+    event.events = EPOLLIN | EPOLLRDHUP;
     if (want_write) {
         event.events |= EPOLLOUT;
     }
@@ -78,7 +107,17 @@ bool update_client_events(int epoll_fd, int socket_fd, bool want_write) {
                &event) == 0;
 }
 
-int main() {
+} // namespace
+
+int main(int argc, char** argv) {
+    const int port = parse_port(argc, argv);
+    if (port < 0) {
+        return 2;
+    }
+
+    std::signal(SIGINT, stop_server);
+    std::signal(SIGTERM, stop_server);
+
     const int epoll_fd = ::epoll_create1(0);
 
     if (epoll_fd < 0) {
@@ -100,8 +139,6 @@ int main() {
         ::close(epoll_fd);
         return 1;
     }
-
-    constexpr int port = 9040;
 
     int reuse = 1;
     if (::setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR,
@@ -150,26 +187,39 @@ int main() {
     std::unordered_map<int, edgelink::StreamParser> parsers;
     std::unordered_map<int, std::string> device_ids;
     std::unordered_map<int, std::vector<std::uint8_t>> pending_writes;
+    std::unordered_map<int, std::chrono::steady_clock::time_point> last_seen;
+    constexpr auto inactivity_timeout = std::chrono::seconds(15);
 
     const auto close_client = [&](int socket_fd) {
+        ::epoll_ctl(epoll_fd, EPOLL_CTL_DEL, socket_fd, nullptr);
+        if (const auto device = device_ids.find(socket_fd);
+            device != device_ids.end()) {
+            std::cout << "device offline: id=" << device->second
+                      << " fd=" << socket_fd << '\n';
+        }
         parsers.erase(socket_fd);
         device_ids.erase(socket_fd);
         pending_writes.erase(socket_fd);
+        last_seen.erase(socket_fd);
         ::close(socket_fd);
     };
 
-    while (true) {
+    int exit_code = 0;
+
+    while (running) {
         const int ready = ::epoll_wait(
             epoll_fd,
             events.data(),
             static_cast<int>(events.size()),
-            -1);
+            1000);
 
         if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             std::cerr << "epoll_wait: " << std::strerror(errno) << '\n';
-            ::close(server_socket);
-            ::close(epoll_fd);
-            return 1;
+            exit_code = 1;
+            break;
         }
 
         for (int index = 0; index < ready; ++index) {
@@ -180,49 +230,66 @@ int main() {
             std::cout << "event ready on fd=" << event_fd << '\n';
 
             if (event_fd == server_socket) {
-                const int client_socket =
-                    ::accept(server_socket, nullptr, nullptr);
+                while (running) {
+                    const int client_socket =
+                        ::accept(server_socket, nullptr, nullptr);
 
-                if (client_socket < 0) {
-                    std::cerr << "accept: " << std::strerror(errno) << '\n';
-                    ::close(server_socket);
-                    ::close(epoll_fd);
-                    return 1;
+                    if (client_socket < 0) {
+                        if (errno == EINTR) {
+                            continue;
+                        }
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break;
+                        }
+                        std::cerr << "accept: " << std::strerror(errno) << '\n';
+                        exit_code = 1;
+                        running = false;
+                        break;
+                    }
+
+                    if (!set_nonblocking(client_socket)) {
+                        std::cerr << "set_nonblocking client: "
+                                  << std::strerror(errno) << '\n';
+                        ::close(client_socket);
+                        continue;
+                    }
+
+                    epoll_event client_event{};
+                    client_event.events = EPOLLIN | EPOLLRDHUP;
+                    client_event.data.fd = client_socket;
+
+                    if (::epoll_ctl(epoll_fd,
+                                    EPOLL_CTL_ADD,
+                                    client_socket,
+                                    &client_event) < 0) {
+                        std::cerr << "epoll_ctl client: "
+                                  << std::strerror(errno) << '\n';
+                        ::close(client_socket);
+                        continue;
+                    }
+
+                    std::cout << "client registered with epoll: fd="
+                              << client_socket << '\n';
+                    parsers.try_emplace(client_socket);
+                    pending_writes.try_emplace(client_socket);
+                    last_seen[client_socket] =
+                        std::chrono::steady_clock::now();
                 }
-                if (!set_nonblocking(client_socket)) {
-                    std::cerr << "set_nonblocking client: "
-                              << std::strerror(errno) << '\n';
-                    ::close(client_socket);
+            } else {
+                const bool has_input = (event_flags & EPOLLIN) != 0;
+                const bool connection_failed = (event_flags & EPOLLERR) != 0;
+                const bool peer_hung_up =
+                    (event_flags & (EPOLLHUP | EPOLLRDHUP)) != 0;
+
+                if (connection_failed || (peer_hung_up && !has_input)) {
+                    std::cout << "client hangup: fd=" << event_fd << '\n';
+                    close_client(event_fd);
                     continue;
                 }
 
-                std::cout << "accepted client socket: fd="
-                          << client_socket << '\n';
-
-                epoll_event client_event{};
-                client_event.events = EPOLLIN;
-                client_event.data.fd = client_socket;
-
-                if (::epoll_ctl(epoll_fd,
-                                EPOLL_CTL_ADD,
-                                client_socket,
-                                &client_event) < 0) {
-                    std::cerr << "epoll_ctl client: "
-                              << std::strerror(errno) << '\n';
-                    ::close(client_socket);
-                    ::close(server_socket);
-                    ::close(epoll_fd);
-                    return 1;
-                }
-
-                std::cout << "client registered with epoll: fd="
-                          << client_socket << '\n';
-                parsers.try_emplace(client_socket);
-                pending_writes.try_emplace(client_socket);
-            } else {
                 bool disconnected = false;
 
-                if ((event_flags & EPOLLIN) != 0) {
+                if (has_input) {
                     std::array<std::uint8_t, 2048> buffer{};
 
                     while (true) {
@@ -258,6 +325,7 @@ int main() {
 
                         std::cout << "received " << count
                                   << " bytes from fd=" << event_fd << '\n';
+                        last_seen[event_fd] = std::chrono::steady_clock::now();
                         auto& parser = parsers.at(event_fd);
 
                         const auto messages = parser.push(std::span(
@@ -352,8 +420,32 @@ int main() {
                 }
             }
         }
+
+        const auto now = std::chrono::steady_clock::now();
+        std::vector<int> timed_out_clients;
+        for (const auto& [socket_fd, seen_at] : last_seen) {
+            if (now - seen_at >= inactivity_timeout) {
+                timed_out_clients.push_back(socket_fd);
+            }
+        }
+        for (const int socket_fd : timed_out_clients) {
+            std::cout << "client timeout: fd=" << socket_fd << '\n';
+            close_client(socket_fd);
+        }
+    }
+
+    std::vector<int> connected_clients;
+    connected_clients.reserve(parsers.size());
+    for (const auto& [socket_fd, parser] : parsers) {
+        static_cast<void>(parser);
+        connected_clients.push_back(socket_fd);
+    }
+    for (const int socket_fd : connected_clients) {
+        close_client(socket_fd);
     }
 
     ::close(server_socket);
     ::close(epoll_fd);
+    std::cout << "epoll gateway stopped\n";
+    return exit_code;
 }
