@@ -14,15 +14,18 @@ constexpr int kSdaPin = 21;
 constexpr int kSclPin = 22;
 constexpr std::uint8_t kSht30Address = 0x44;
 constexpr unsigned long kSampleIntervalMs = 2000;
+constexpr unsigned long kHeartbeatIntervalMs = 5000;
 constexpr char kDeviceId[] = "esp32-real-001";
 constexpr std::uint16_t kProtocolMagic = 0x4544;
 constexpr std::uint8_t kProtocolVersion = 1;
 constexpr std::uint8_t kHelloMessageType = 1;
 constexpr std::uint8_t kTelemetryMessageType = 2;
+constexpr std::uint8_t kHeartbeatMessageType = 3;
 constexpr std::uint8_t kAckMessageType = 4;
 constexpr std::size_t kHeaderSize = 14;
 constexpr unsigned long kAckTimeoutMs = 2000;
 std::uint32_t nextSequence = 1;
+unsigned long lastHeartbeatMs = 0;
 
 Adafruit_SHT31 sensor;
 
@@ -205,13 +208,20 @@ bool receiveAck(std::uint32_t expectedSequence) {
   return true;
 }
 
-void sendHello() {
-  const std::vector<std::uint8_t> payload =
-      buildHelloPayload();
+bool sendMessageWithAck(
+    const char* messageName,
+    std::uint8_t messageType,
+    const std::vector<std::uint8_t>& payload) {
+  if (!gatewayClient.connected()) {
+    Serial.print("Cannot send ");
+    Serial.print(messageName);
+    Serial.println(": gateway disconnected");
+    return false;
+  }
 
   const std::vector<std::uint8_t> frame =
       buildFrame(
-          kHelloMessageType,
+          messageType,
           nextSequence,
           payload);
 
@@ -219,60 +229,48 @@ void sendHello() {
       gatewayClient.write(frame.data(), frame.size());
 
   if (bytesSent != frame.size()) {
-    Serial.println("Failed to send HELLO");
+    Serial.print("Failed to send ");
+    Serial.println(messageName);
     gatewayClient.stop();
-    return;
+    return false;
   }
 
-  Serial.print("HELLO sent, seq=");
+  Serial.print(messageName);
+  Serial.print(" sent, seq=");
   Serial.println(nextSequence);
 
   if (!receiveAck(nextSequence)) {
-    Serial.println("HELLO delivery not acknowledged");
+    Serial.print(messageName);
+    Serial.println(" delivery not acknowledged");
     gatewayClient.stop();
-    return;
+    return false;
   }
 
   Serial.print("ACK received, seq=");
   Serial.println(nextSequence);
   ++nextSequence;
+  return true;
+}
+
+void sendHello() {
+  sendMessageWithAck(
+      "HELLO",
+      kHelloMessageType,
+      buildHelloPayload());
 }
 
 void sendTelemetry(float temperature, float humidity) {
-  if (!gatewayClient.connected()) {
-    Serial.println("Cannot send TELEMETRY: gateway disconnected");
-    return;
-  }
+  sendMessageWithAck(
+      "TELEMETRY",
+      kTelemetryMessageType,
+      buildTelemetryPayload(temperature, humidity));
+}
 
-  const std::vector<std::uint8_t> payload =
-      buildTelemetryPayload(temperature, humidity);
-  const std::vector<std::uint8_t> frame =
-      buildFrame(
-          kTelemetryMessageType,
-          nextSequence,
-          payload);
-
-  const std::size_t bytesSent =
-      gatewayClient.write(frame.data(), frame.size());
-
-  if (bytesSent != frame.size()) {
-    Serial.println("Failed to send TELEMETRY");
-    gatewayClient.stop();
-    return;
-  }
-
-  Serial.print("TELEMETRY sent, seq=");
-  Serial.println(nextSequence);
-
-  if (!receiveAck(nextSequence)) {
-    Serial.println("TELEMETRY delivery not acknowledged");
-    gatewayClient.stop();
-    return;
-  }
-
-  Serial.print("ACK received, seq=");
-  Serial.println(nextSequence);
-  ++nextSequence;
+void sendHeartbeat() {
+  sendMessageWithAck(
+      "HEARTBEAT",
+      kHeartbeatMessageType,
+      {});
 }
 
 void connectGateway() {
@@ -318,6 +316,7 @@ void setup() {
   }
 
   Serial.println("SHT30 connected");
+  lastHeartbeatMs = millis();
 }
 
 void loop() {
@@ -334,6 +333,12 @@ void loop() {
     Serial.println(" %");
 
     sendTelemetry(temperature, humidity);
+  }
+
+  const unsigned long now = millis();
+  if (now - lastHeartbeatMs >= kHeartbeatIntervalMs) {
+    sendHeartbeat();
+    lastHeartbeatMs = now;
   }
 
   delay(kSampleIntervalMs);

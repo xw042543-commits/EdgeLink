@@ -43,8 +43,10 @@ SHT30 connected
 Temperature: 28.14 C, Humidity: 55.39 %
 TELEMETRY sent, seq=2
 ACK received, seq=2
+HEARTBEAT sent, seq=3
+ACK received, seq=3
 ```
 
 The firmware sends HELLO and TELEMETRY frames and validates the type, sequence,
-and CRC of each ACK returned by the gateway. Sending heartbeats and reconnecting
-after failures are the next milestones.
+and CRC of each ACK returned by the gateway. It also sends an acknowledged
+heartbeat every five seconds. Reconnecting after failures is the next milestone.
