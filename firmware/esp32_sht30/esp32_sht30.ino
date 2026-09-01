@@ -2,6 +2,7 @@
 #include <Adafruit_SHT31.h>
 #include <WiFi.h>
 
+#include <vector>
 #include <cstdint>
 
 #include "secrets.h"
@@ -12,6 +13,11 @@ constexpr int kSdaPin = 21;
 constexpr int kSclPin = 22;
 constexpr std::uint8_t kSht30Address = 0x44;
 constexpr unsigned long kSampleIntervalMs = 2000;
+constexpr char kDeviceId[] = "esp32-real-001";
+constexpr std::uint16_t kProtocolMagic = 0x4544;
+constexpr std::uint8_t kProtocolVersion = 1;
+constexpr std::uint8_t kHelloMessageType = 1;
+std::uint32_t nextSequence = 1;;
 
 Adafruit_SHT31 sensor;
 
@@ -20,16 +26,135 @@ constexpr std::uint16_t kGatewayPort = 9000;
 
 WiFiClient gatewayClient;
 
+void appendU16(std::vector<std::uint8_t>& output,
+               std::uint16_t value) {
+  output.push_back(static_cast<std::uint8_t>(value >> 8U));
+  output.push_back(static_cast<std::uint8_t>(value));
+}
+
+void appendU32(std::vector<std::uint8_t>& output,
+               std::uint32_t value) {
+  output.push_back(static_cast<std::uint8_t>(value >> 24U));
+  output.push_back(static_cast<std::uint8_t>(value >> 16U));
+  output.push_back(static_cast<std::uint8_t>(value >> 8U));
+  output.push_back(static_cast<std::uint8_t>(value));
+}
+
+void appendU64(std::vector<std::uint8_t>& output,
+               std::uint64_t value) {
+  appendU32(output, static_cast<std::uint32_t>(value >> 32U));
+  appendU32(output, static_cast<std::uint32_t>(value));
+}
+
+std::uint32_t calculateCrc32(
+    const std::vector<std::uint8_t>& data) {
+  std::uint32_t crc = 0xFFFFFFFFU;
+
+  for (const std::uint8_t byte : data) {
+    crc ^= byte;
+
+    for (int bit = 0; bit < 8; ++bit) {
+      if ((crc & 1U) != 0U) {
+        crc = (crc >> 1U) ^ 0xEDB88320U;
+      } else {
+        crc >>= 1U;
+      }
+    }
+  }
+
+  return ~crc;
+}
+
+std::vector<std::uint8_t> buildHelloPayload() {
+  std::vector<std::uint8_t> payload;
+
+  const std::uint64_t sessionId =
+      ESP.getEfuseMac() ^ static_cast<std::uint64_t>(micros());
+
+  appendU64(payload, sessionId);
+
+  payload.insert(
+      payload.end(),
+      kDeviceId,
+      kDeviceId + sizeof(kDeviceId) - 1);
+
+  return payload;
+}
+
+std::vector<std::uint8_t> buildFrame(
+    std::uint8_t messageType,
+    std::uint32_t sequence,
+    const std::vector<std::uint8_t>& payload) {
+  std::vector<std::uint8_t> checksumInput;
+
+  appendU16(checksumInput, kProtocolMagic);
+  checksumInput.push_back(kProtocolVersion);
+  checksumInput.push_back(messageType);
+  appendU16(
+      checksumInput,
+      static_cast<std::uint16_t>(payload.size()));
+  appendU32(checksumInput, sequence);
+  checksumInput.insert(
+      checksumInput.end(),
+      payload.begin(),
+      payload.end());
+
+  const std::uint32_t checksum =
+      calculateCrc32(checksumInput);
+
+  std::vector<std::uint8_t> frame;
+  frame.reserve(14 + payload.size());
+
+  // 前10字节协议头
+  frame.insert(
+      frame.end(),
+      checksumInput.begin(),
+      checksumInput.begin() + 10);
+
+  // 第10至13字节放CRC32
+  appendU32(frame, checksum);
+
+  // 第14字节开始放Payload
+  frame.insert(
+      frame.end(),
+      checksumInput.begin() + 10,
+      checksumInput.end());
+
+  return frame;
+}
+
+void sendHello() {
+  const std::vector<std::uint8_t> payload =
+      buildHelloPayload();
+
+  const std::vector<std::uint8_t> frame =
+      buildFrame(
+          kHelloMessageType,
+          nextSequence,
+          payload);
+
+  const std::size_t bytesSent =
+      gatewayClient.write(frame.data(), frame.size());
+
+  if (bytesSent == frame.size()) {
+    Serial.print("HELLO sent, seq=");
+    Serial.println(nextSequence);
+    ++nextSequence;
+  } else {
+    Serial.println("Failed to send HELLO");
+  }
+}
+
 void connectGateway() {
   Serial.print("Connecting to EdgeLink gateway...");
 
   if (gatewayClient.connect(kGatewayHost, kGatewayPort)) {
-    Serial.println("connected");
-  } else {
-    Serial.println("failed");
-  }
+  Serial.println("connected");
+  sendHello();
+} else {
+  Serial.println("failed");
 }
-
+}
 
 void connectWifi() {
   WiFi.mode(WIFI_STA);
