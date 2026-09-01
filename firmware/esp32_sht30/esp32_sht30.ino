@@ -15,6 +15,22 @@ constexpr unsigned long kSampleIntervalMs = 2000;
 
 Adafruit_SHT31 sensor;
 
+constexpr char kGatewayHost[] = "192.168.100.48";
+constexpr std::uint16_t kGatewayPort = 9000;
+
+WiFiClient gatewayClient;
+
+void connectGateway() {
+  Serial.print("Connecting to EdgeLink gateway...");
+
+  if (gatewayClient.connect(kGatewayHost, kGatewayPort)) {
+    Serial.println("connected");
+  } else {
+    Serial.println("failed");
+  }
+}
+
+
 void connectWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(kWifiSsid, kWifiPassword);
@@ -35,6 +51,7 @@ void connectWifi() {
 void setup() {
   Serial.begin(115200);
   connectWifi();
+  connectGateway();
 
   Wire.begin(kSdaPin, kSclPin);
 
