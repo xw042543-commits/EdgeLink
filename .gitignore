@@ -3,4 +3,4 @@ cmake-build-*/
 .DS_Store
 *.o
 *.dSYM/
-
+firmware/esp32_sht30/secrets.h
