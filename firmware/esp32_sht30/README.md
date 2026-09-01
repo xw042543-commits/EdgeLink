@@ -53,6 +53,6 @@ heartbeat every five seconds. If delivery fails, it closes the stale socket,
 retries the gateway every three seconds, establishes a new session with HELLO,
 and resumes telemetry after the HELLO ACK is validated.
 
-Gateway shutdown and restart recovery has been tested on the physical device.
-Wi-Fi reconnection is implemented with ESP32 auto-reconnect and bounded retry
-logic, but physical Wi-Fi interruption testing remains on the roadmap.
+Gateway shutdown/restart recovery and a controlled Wi-Fi interruption have both
+been tested on the physical device. After Wi-Fi returns, the firmware reconnects
+the TCP socket, establishes a new HELLO session, and resumes telemetry.
