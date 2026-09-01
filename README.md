@@ -49,12 +49,13 @@ are documented in [`docs/epoll-design.md`](docs/epoll-design.md).
 | ESP32 + SHT30 telemetry | Verified | Real HELLO and sensor telemetry received by the macOS gateway |
 | ESP32 ACK handling | Verified | Physical device validates ACK type, sequence, and CRC |
 | ESP32 heartbeat | Verified | Physical device sends 5-second heartbeats and validates ACKs |
-| ESP32 reconnect | In progress | Simulator flow is complete; firmware port remains |
+| ESP32 gateway reconnect | Verified | Physical device recovers after gateway shutdown and restart |
+| ESP32 Wi-Fi interruption recovery | In progress | Implemented but not yet fault-tested on hardware |
 | SQLite, dashboard, and Modbus/RS485 | Planned | Post-hardware roadmap |
 
-Hardware telemetry, ACK handling, and heartbeat have been tested on the physical
-ESP32 and SHT30. Firmware-side reconnect recovery remains in progress and is not yet
-claimed as complete.
+Hardware telemetry, ACK handling, heartbeat, and gateway reconnect recovery have been
+tested on the physical ESP32 and SHT30. Wi-Fi interruption recovery is implemented but
+is not yet claimed as verified.
 
 ## Quick start
 
@@ -133,12 +134,11 @@ heartbeat acknowledgments, concurrent clients, and orderly shutdown.
 
 ## Roadmap
 
-1. Implement reconnect recovery in the ESP32 firmware.
-2. Validate hardware behavior during gateway shutdown and Wi-Fi interruption.
-3. Run the physical ESP32 against the Linux `epoll` gateway.
-4. Persist telemetry in SQLite and expose device status and history through a small API.
-5. Add a monitoring dashboard, alerts, structured logs, and benchmark reports.
-6. Integrate an RS485/Modbus sensor as the industrial hardware extension.
+1. Validate hardware recovery during a Wi-Fi interruption.
+2. Run the physical ESP32 against the Linux `epoll` gateway.
+3. Persist telemetry in SQLite and expose device status and history through a small API.
+4. Add a monitoring dashboard, alerts, structured logs, and benchmark reports.
+5. Integrate an RS485/Modbus sensor as the industrial hardware extension.
 
 ## ESP32 hardware validation
 

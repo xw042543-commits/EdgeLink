@@ -15,6 +15,8 @@ constexpr int kSclPin = 22;
 constexpr std::uint8_t kSht30Address = 0x44;
 constexpr unsigned long kSampleIntervalMs = 2000;
 constexpr unsigned long kHeartbeatIntervalMs = 5000;
+constexpr unsigned long kReconnectIntervalMs = 3000;
+constexpr unsigned long kInitialWifiTimeoutMs = 15000;
 constexpr char kDeviceId[] = "esp32-real-001";
 constexpr std::uint16_t kProtocolMagic = 0x4544;
 constexpr std::uint8_t kProtocolVersion = 1;
@@ -26,6 +28,7 @@ constexpr std::size_t kHeaderSize = 14;
 constexpr unsigned long kAckTimeoutMs = 2000;
 std::uint32_t nextSequence = 1;
 unsigned long lastHeartbeatMs = 0;
+unsigned long lastReconnectAttemptMs = 0;
 
 Adafruit_SHT31 sensor;
 
@@ -252,59 +255,108 @@ bool sendMessageWithAck(
   return true;
 }
 
-void sendHello() {
-  sendMessageWithAck(
+bool sendHello() {
+  return sendMessageWithAck(
       "HELLO",
       kHelloMessageType,
       buildHelloPayload());
 }
 
-void sendTelemetry(float temperature, float humidity) {
-  sendMessageWithAck(
+bool sendTelemetry(float temperature, float humidity) {
+  return sendMessageWithAck(
       "TELEMETRY",
       kTelemetryMessageType,
       buildTelemetryPayload(temperature, humidity));
 }
 
-void sendHeartbeat() {
-  sendMessageWithAck(
+bool sendHeartbeat() {
+  return sendMessageWithAck(
       "HEARTBEAT",
       kHeartbeatMessageType,
       {});
 }
 
-void connectGateway() {
+bool connectGateway() {
+  lastReconnectAttemptMs = millis();
   Serial.print("Connecting to EdgeLink gateway...");
 
-  if (gatewayClient.connect(kGatewayHost, kGatewayPort)) {
-    Serial.println("connected");
-    sendHello();
-  } else {
+  if (!gatewayClient.connect(kGatewayHost, kGatewayPort)) {
     Serial.println("failed");
+    return false;
   }
+
+  Serial.println("connected");
+
+  if (!sendHello()) {
+    Serial.println("Gateway session setup failed");
+    gatewayClient.stop();
+    return false;
+  }
+
+  lastHeartbeatMs = millis();
+  Serial.println("Gateway session ready");
+  return true;
 }
 
-void connectWifi() {
+bool connectWifi() {
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(kWifiSsid, kWifiPassword);
 
   Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
+  const unsigned long startedAt = millis();
+
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - startedAt < kInitialWifiTimeoutMs) {
     delay(500);
     Serial.print('.');
   }
 
   Serial.println();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Initial Wi-Fi connection timed out");
+    return false;
+  }
+
   Serial.print("Wi-Fi connected, ESP32 IP: ");
   Serial.println(WiFi.localIP());
+  return true;
+}
+
+void maintainConnections() {
+  const unsigned long now = millis();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (gatewayClient.connected()) {
+      gatewayClient.stop();
+    }
+
+    if (now - lastReconnectAttemptMs >= kReconnectIntervalMs) {
+      Serial.println("Wi-Fi disconnected; reconnecting...");
+      WiFi.reconnect();
+      lastReconnectAttemptMs = now;
+    }
+
+    return;
+  }
+
+  if (!gatewayClient.connected() &&
+      now - lastReconnectAttemptMs >= kReconnectIntervalMs) {
+    connectGateway();
+  }
 }
 
 }  // namespace
 
 void setup() {
   Serial.begin(115200);
-  connectWifi();
-  connectGateway();
+  delay(1000);
+
+  if (connectWifi()) {
+    connectGateway();
+  }
 
   Wire.begin(kSdaPin, kSclPin);
 
@@ -316,10 +368,11 @@ void setup() {
   }
 
   Serial.println("SHT30 connected");
-  lastHeartbeatMs = millis();
 }
 
 void loop() {
+  maintainConnections();
+
   const float temperature = sensor.readTemperature();
   const float humidity = sensor.readHumidity();
 
@@ -332,11 +385,14 @@ void loop() {
     Serial.print(humidity);
     Serial.println(" %");
 
-    sendTelemetry(temperature, humidity);
+    if (gatewayClient.connected()) {
+      sendTelemetry(temperature, humidity);
+    }
   }
 
   const unsigned long now = millis();
-  if (now - lastHeartbeatMs >= kHeartbeatIntervalMs) {
+  if (gatewayClient.connected() &&
+      now - lastHeartbeatMs >= kHeartbeatIntervalMs) {
     sendHeartbeat();
     lastHeartbeatMs = now;
   }

@@ -49,4 +49,10 @@ ACK received, seq=3
 
 The firmware sends HELLO and TELEMETRY frames and validates the type, sequence,
 and CRC of each ACK returned by the gateway. It also sends an acknowledged
-heartbeat every five seconds. Reconnecting after failures is the next milestone.
+heartbeat every five seconds. If delivery fails, it closes the stale socket,
+retries the gateway every three seconds, establishes a new session with HELLO,
+and resumes telemetry after the HELLO ACK is validated.
+
+Gateway shutdown and restart recovery has been tested on the physical device.
+Wi-Fi reconnection is implemented with ESP32 auto-reconnect and bounded retry
+logic, but physical Wi-Fi interruption testing remains on the roadmap.
