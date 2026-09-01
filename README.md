@@ -8,9 +8,9 @@ EdgeLink is a C++20 device communication gateway for Linux. It receives telemetr
 TCP, validates a compact binary protocol, tracks device state, and recovers from
 corrupted frames and broken connections.
 
-The current release validates the complete software path with deterministic simulators
-and concurrent load tests. Real hardware integration with an ESP32 and an SHT30
-temperature/humidity sensor is the next milestone and is currently in progress.
+The current release validates the software path with deterministic simulators and
+concurrent load tests. It also streams real SHT30 measurements from an ESP32 over
+Wi-Fi/TCP into the C++ gateway using the same binary protocol and CRC-32 validation.
 
 ## Engineering highlights
 
@@ -28,19 +28,10 @@ temperature/humidity sensor is the next milestone and is currently in progress.
 ## Architecture
 
 ```text
-Today
-Device simulator / load generator
-              │ TCP binary frames
-              ▼
-      Linux C++ epoll gateway
-      ├── non-blocking event loop
-      ├── parser state per connection
-      ├── CRC and payload validation
-      ├── queued ACK output
-      └── identity and inactivity tracking
-
-Hardware milestone in progress
-SHT30 ──I2C──> ESP32 ──Wi-Fi/TCP──> Linux C++ epoll gateway
+SHT30 ──I2C──> ESP32 ──Wi-Fi/TCP + binary frames──> C++ gateway
+                                                               ├── CRC validation
+Device simulator / load generator ──TCP binary frames─────────>├── ACK output
+                                                               └── device state
 ```
 
 The portable threaded gateway remains available for macOS development. The Linux
@@ -55,11 +46,13 @@ are documented in [`docs/epoll-design.md`](docs/epoll-design.md).
 | ACK, heartbeat, timeout, and reconnect flow | Complete | Simulator and end-to-end runs |
 | Linux non-blocking `epoll` gateway | Complete | Ubuntu build and smoke test |
 | Concurrent simulated devices | Complete | Configurable load generator |
-| ESP32 + SHT30 integration | In progress | Hardware implementation is the next milestone |
+| ESP32 + SHT30 telemetry | Verified | Real HELLO and sensor telemetry received by the macOS gateway |
+| ESP32 ACK, heartbeat, and reconnect | In progress | Simulator flow is complete; firmware port remains |
 | SQLite, dashboard, and Modbus/RS485 | Planned | Post-hardware roadmap |
 
-Hardware capabilities are not claimed as complete until they have been tested on the
-physical ESP32 and sensor.
+Hardware telemetry has been tested on the physical ESP32 and SHT30. Firmware-side ACK
+handling, heartbeat, and reconnect recovery remain in progress and are not yet claimed
+as complete.
 
 ## Quick start
 
@@ -138,12 +131,19 @@ heartbeat acknowledgments, concurrent clients, and orderly shutdown.
 
 ## Roadmap
 
-1. Read real temperature and humidity from an SHT30 over I2C on ESP32.
-2. Port the EdgeLink encoder and reliability flow to the ESP32 Wi-Fi client.
-3. Validate end-to-end hardware telemetry, reconnect behavior, and fault recovery.
+1. Implement ACK reception, heartbeat, and reconnect recovery in the ESP32 firmware.
+2. Validate hardware behavior during gateway shutdown and Wi-Fi interruption.
+3. Run the physical ESP32 against the Linux `epoll` gateway.
 4. Persist telemetry in SQLite and expose device status and history through a small API.
 5. Add a monitoring dashboard, alerts, structured logs, and benchmark reports.
 6. Integrate an RS485/Modbus sensor as the industrial hardware extension.
+
+## ESP32 hardware validation
+
+The physical ESP32 identifies itself as `esp32-real-001` and streams measurements
+sampled from the SHT30 every two seconds:
+
+![Real ESP32 and SHT30 telemetry received by EdgeLink](docs/images/esp32-real-telemetry.png)
 
 ## Ubuntu validation
 

@@ -1,8 +1,8 @@
 # ESP32 + SHT30 bring-up firmware
 
-This sketch is the first hardware milestone for EdgeLink. It reads real
-temperature and humidity values from an SHT30 over I2C and prints them to the
-USB serial monitor.
+This sketch reads real temperature and humidity values from an SHT30 over I2C,
+encodes them as EdgeLink binary frames, and streams them over Wi-Fi/TCP to the
+C++ gateway.
 
 ## Hardware
 
@@ -36,9 +36,12 @@ Expected output:
 
 ```text
 Wi-Fi connected, ESP32 IP: 192.168.1.123
+Connecting to EdgeLink gateway...connected
+HELLO sent, seq=1
 SHT30 connected
 Temperature: 28.14 C, Humidity: 55.39 %
+TELEMETRY sent, seq=2
 ```
 
-This firmware does not send data to the EdgeLink gateway yet. The next
-milestone adds TCP and the EdgeLink wire protocol.
+The firmware currently sends HELLO and TELEMETRY frames. Receiving ACKs,
+sending heartbeats, and reconnecting after failures are the next milestones.

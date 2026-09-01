@@ -17,7 +17,8 @@ constexpr char kDeviceId[] = "esp32-real-001";
 constexpr std::uint16_t kProtocolMagic = 0x4544;
 constexpr std::uint8_t kProtocolVersion = 1;
 constexpr std::uint8_t kHelloMessageType = 1;
-std::uint32_t nextSequence = 1;;
+constexpr std::uint8_t kTelemetryMessageType = 2;
+std::uint32_t nextSequence = 1;
 
 Adafruit_SHT31 sensor;
 
@@ -77,6 +78,27 @@ std::vector<std::uint8_t> buildHelloPayload() {
       payload.end(),
       kDeviceId,
       kDeviceId + sizeof(kDeviceId) - 1);
+
+  return payload;
+}
+
+std::vector<std::uint8_t> buildTelemetryPayload(
+    float temperature,
+    float humidity) {
+  std::vector<std::uint8_t> payload;
+
+  const std::int16_t temperatureCenti =
+      static_cast<std::int16_t>(temperature * 100.0F);
+  const std::uint16_t humidityCenti =
+      static_cast<std::uint16_t>(humidity * 100.0F);
+
+  appendU64(payload, static_cast<std::uint64_t>(millis()));
+  appendU16(
+      payload,
+      static_cast<std::uint16_t>(temperatureCenti));
+  appendU16(payload, humidityCenti);
+  appendU16(payload, 0);  // Supply voltage is not measured yet.
+  appendU16(payload, 0);  // Sensor status: zero means healthy.
 
   return payload;
 }
@@ -145,15 +167,41 @@ void sendHello() {
   }
 }
 
+void sendTelemetry(float temperature, float humidity) {
+  if (!gatewayClient.connected()) {
+    Serial.println("Cannot send TELEMETRY: gateway disconnected");
+    return;
+  }
+
+  const std::vector<std::uint8_t> payload =
+      buildTelemetryPayload(temperature, humidity);
+  const std::vector<std::uint8_t> frame =
+      buildFrame(
+          kTelemetryMessageType,
+          nextSequence,
+          payload);
+
+  const std::size_t bytesSent =
+      gatewayClient.write(frame.data(), frame.size());
+
+  if (bytesSent == frame.size()) {
+    Serial.print("TELEMETRY sent, seq=");
+    Serial.println(nextSequence);
+    ++nextSequence;
+  } else {
+    Serial.println("Failed to send TELEMETRY");
+  }
+}
+
 void connectGateway() {
   Serial.print("Connecting to EdgeLink gateway...");
 
   if (gatewayClient.connect(kGatewayHost, kGatewayPort)) {
-  Serial.println("connected");
-  sendHello();
-} else {
-  Serial.println("failed");
-}
+    Serial.println("connected");
+    sendHello();
+  } else {
+    Serial.println("failed");
+  }
 }
 
 void connectWifi() {
@@ -202,6 +250,8 @@ void loop() {
     Serial.print(" C, Humidity: ");
     Serial.print(humidity);
     Serial.println(" %");
+
+    sendTelemetry(temperature, humidity);
   }
 
   delay(kSampleIntervalMs);
