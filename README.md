@@ -47,12 +47,13 @@ are documented in [`docs/epoll-design.md`](docs/epoll-design.md).
 | Linux non-blocking `epoll` gateway | Complete | Ubuntu build and smoke test |
 | Concurrent simulated devices | Complete | Configurable load generator |
 | ESP32 + SHT30 telemetry | Verified | Real HELLO and sensor telemetry received by the macOS gateway |
-| ESP32 ACK, heartbeat, and reconnect | In progress | Simulator flow is complete; firmware port remains |
+| ESP32 ACK handling | Verified | Physical device validates ACK type, sequence, and CRC |
+| ESP32 heartbeat and reconnect | In progress | Simulator flow is complete; firmware port remains |
 | SQLite, dashboard, and Modbus/RS485 | Planned | Post-hardware roadmap |
 
-Hardware telemetry has been tested on the physical ESP32 and SHT30. Firmware-side ACK
-handling, heartbeat, and reconnect recovery remain in progress and are not yet claimed
-as complete.
+Hardware telemetry and ACK handling have been tested on the physical ESP32 and SHT30.
+Firmware-side heartbeat and reconnect recovery remain in progress and are not yet
+claimed as complete.
 
 ## Quick start
 
@@ -131,7 +132,7 @@ heartbeat acknowledgments, concurrent clients, and orderly shutdown.
 
 ## Roadmap
 
-1. Implement ACK reception, heartbeat, and reconnect recovery in the ESP32 firmware.
+1. Implement heartbeat and reconnect recovery in the ESP32 firmware.
 2. Validate hardware behavior during gateway shutdown and Wi-Fi interruption.
 3. Run the physical ESP32 against the Linux `epoll` gateway.
 4. Persist telemetry in SQLite and expose device status and history through a small API.

@@ -2,6 +2,7 @@
 #include <Adafruit_SHT31.h>
 #include <WiFi.h>
 
+#include <array>
 #include <vector>
 #include <cstdint>
 
@@ -18,6 +19,9 @@ constexpr std::uint16_t kProtocolMagic = 0x4544;
 constexpr std::uint8_t kProtocolVersion = 1;
 constexpr std::uint8_t kHelloMessageType = 1;
 constexpr std::uint8_t kTelemetryMessageType = 2;
+constexpr std::uint8_t kAckMessageType = 4;
+constexpr std::size_t kHeaderSize = 14;
+constexpr unsigned long kAckTimeoutMs = 2000;
 std::uint32_t nextSequence = 1;
 
 Adafruit_SHT31 sensor;
@@ -45,6 +49,19 @@ void appendU64(std::vector<std::uint8_t>& output,
                std::uint64_t value) {
   appendU32(output, static_cast<std::uint32_t>(value >> 32U));
   appendU32(output, static_cast<std::uint32_t>(value));
+}
+
+std::uint16_t readU16(const std::uint8_t* data) {
+  return static_cast<std::uint16_t>(
+      (static_cast<std::uint16_t>(data[0]) << 8U) |
+      data[1]);
+}
+
+std::uint32_t readU32(const std::uint8_t* data) {
+  return (static_cast<std::uint32_t>(data[0]) << 24U) |
+         (static_cast<std::uint32_t>(data[1]) << 16U) |
+         (static_cast<std::uint32_t>(data[2]) << 8U) |
+         static_cast<std::uint32_t>(data[3]);
 }
 
 std::uint32_t calculateCrc32(
@@ -145,6 +162,49 @@ std::vector<std::uint8_t> buildFrame(
   return frame;
 }
 
+bool receiveAck(std::uint32_t expectedSequence) {
+  std::array<std::uint8_t, kHeaderSize> frame{};
+  gatewayClient.setTimeout(kAckTimeoutMs);
+
+  const std::size_t bytesRead = gatewayClient.readBytes(
+      reinterpret_cast<char*>(frame.data()),
+      frame.size());
+
+  if (bytesRead != frame.size()) {
+    Serial.println("ACK timeout");
+    return false;
+  }
+
+  const bool validHeader =
+      readU16(frame.data()) == kProtocolMagic &&
+      frame[2] == kProtocolVersion &&
+      frame[3] == kAckMessageType &&
+      readU16(frame.data() + 4) == 0;
+
+  if (!validHeader) {
+    Serial.println("Invalid ACK header");
+    return false;
+  }
+
+  const std::vector<std::uint8_t> checksumInput(
+      frame.begin(),
+      frame.begin() + 10);
+  const std::uint32_t receivedChecksum =
+      readU32(frame.data() + 10);
+
+  if (calculateCrc32(checksumInput) != receivedChecksum) {
+    Serial.println("Invalid ACK CRC");
+    return false;
+  }
+
+  if (readU32(frame.data() + 6) != expectedSequence) {
+    Serial.println("Unexpected ACK sequence");
+    return false;
+  }
+
+  return true;
+}
+
 void sendHello() {
   const std::vector<std::uint8_t> payload =
       buildHelloPayload();
@@ -158,13 +218,24 @@ void sendHello() {
   const std::size_t bytesSent =
       gatewayClient.write(frame.data(), frame.size());
 
-  if (bytesSent == frame.size()) {
-    Serial.print("HELLO sent, seq=");
-    Serial.println(nextSequence);
-    ++nextSequence;
-  } else {
+  if (bytesSent != frame.size()) {
     Serial.println("Failed to send HELLO");
+    gatewayClient.stop();
+    return;
   }
+
+  Serial.print("HELLO sent, seq=");
+  Serial.println(nextSequence);
+
+  if (!receiveAck(nextSequence)) {
+    Serial.println("HELLO delivery not acknowledged");
+    gatewayClient.stop();
+    return;
+  }
+
+  Serial.print("ACK received, seq=");
+  Serial.println(nextSequence);
+  ++nextSequence;
 }
 
 void sendTelemetry(float temperature, float humidity) {
@@ -184,13 +255,24 @@ void sendTelemetry(float temperature, float humidity) {
   const std::size_t bytesSent =
       gatewayClient.write(frame.data(), frame.size());
 
-  if (bytesSent == frame.size()) {
-    Serial.print("TELEMETRY sent, seq=");
-    Serial.println(nextSequence);
-    ++nextSequence;
-  } else {
+  if (bytesSent != frame.size()) {
     Serial.println("Failed to send TELEMETRY");
+    gatewayClient.stop();
+    return;
   }
+
+  Serial.print("TELEMETRY sent, seq=");
+  Serial.println(nextSequence);
+
+  if (!receiveAck(nextSequence)) {
+    Serial.println("TELEMETRY delivery not acknowledged");
+    gatewayClient.stop();
+    return;
+  }
+
+  Serial.print("ACK received, seq=");
+  Serial.println(nextSequence);
+  ++nextSequence;
 }
 
 void connectGateway() {

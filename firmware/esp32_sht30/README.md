@@ -38,10 +38,13 @@ Expected output:
 Wi-Fi connected, ESP32 IP: 192.168.1.123
 Connecting to EdgeLink gateway...connected
 HELLO sent, seq=1
+ACK received, seq=1
 SHT30 connected
 Temperature: 28.14 C, Humidity: 55.39 %
 TELEMETRY sent, seq=2
+ACK received, seq=2
 ```
 
-The firmware currently sends HELLO and TELEMETRY frames. Receiving ACKs,
-sending heartbeats, and reconnecting after failures are the next milestones.
+The firmware sends HELLO and TELEMETRY frames and validates the type, sequence,
+and CRC of each ACK returned by the gateway. Sending heartbeats and reconnecting
+after failures are the next milestones.
