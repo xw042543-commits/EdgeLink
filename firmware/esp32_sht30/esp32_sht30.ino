@@ -32,9 +32,6 @@ unsigned long lastReconnectAttemptMs = 0;
 
 Adafruit_SHT31 sensor;
 
-constexpr char kGatewayHost[] = "192.168.100.48";
-constexpr std::uint16_t kGatewayPort = 9000;
-
 WiFiClient gatewayClient;
 
 void appendU16(std::vector<std::uint8_t>& output,
