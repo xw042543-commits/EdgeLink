@@ -10,7 +10,8 @@ corrupted frames and broken connections.
 
 The current release validates the software path with deterministic simulators and
 concurrent load tests. It also streams real SHT30 measurements from an ESP32 over
-Wi-Fi/TCP into the C++ gateway using the same binary protocol and CRC-32 validation.
+Wi-Fi/TCP into both the portable macOS gateway and the Linux `epoll` gateway using
+the same binary protocol and CRC-32 validation.
 
 ## Engineering highlights
 
@@ -44,9 +45,9 @@ are documented in [`docs/epoll-design.md`](docs/epoll-design.md).
 |---|---|---|
 | Binary protocol and stream parser | Complete | Automated protocol tests |
 | ACK, heartbeat, timeout, and reconnect flow | Complete | Simulator and end-to-end runs |
-| Linux non-blocking `epoll` gateway | Complete | Ubuntu build and smoke test |
+| Linux non-blocking `epoll` gateway | Verified | Ubuntu build, smoke test, and physical ESP32 run |
 | Concurrent simulated devices | Complete | Configurable load generator |
-| ESP32 + SHT30 telemetry | Verified | Real HELLO and sensor telemetry received by the macOS gateway |
+| ESP32 + SHT30 telemetry | Verified | Real HELLO and sensor telemetry received on macOS and Ubuntu |
 | ESP32 ACK handling | Verified | Physical device validates ACK type, sequence, and CRC |
 | ESP32 heartbeat | Verified | Physical device sends 5-second heartbeats and validates ACKs |
 | ESP32 gateway reconnect | Verified | Physical device recovers after gateway shutdown and restart |
@@ -126,17 +127,18 @@ Supported message types are `HELLO`, `TELEMETRY`, `HEARTBEAT`, and `ACK`.
 - Ubuntu Linux ARM64 (`aarch64`) with GCC and GNU Make
 - GitHub Actions on Ubuntu Linux
 - macOS ARM64 with Apple Clang for the portable targets
+- ESP32-WROOM-32 with an SHT30 over I2C and Wi-Fi/TCP
 
 Validation covers clean C++20 builds, protocol round trips, fragmented and coalesced
 TCP frames, CRC rejection, stream resynchronization, telemetry acknowledgments,
-heartbeat acknowledgments, concurrent clients, and orderly shutdown.
+heartbeat acknowledgments, concurrent clients, orderly shutdown, and physical ESP32
+telemetry delivered to the Linux `epoll` gateway.
 
 ## Roadmap
 
-1. Run the physical ESP32 against the Linux `epoll` gateway.
-2. Persist telemetry in SQLite and expose device status and history through a small API.
-3. Add a monitoring dashboard, alerts, structured logs, and benchmark reports.
-4. Integrate an RS485/Modbus sensor as the industrial hardware extension.
+1. Persist telemetry in SQLite and expose device status and history through a small API.
+2. Add a monitoring dashboard, alerts, structured logs, and benchmark reports.
+3. Integrate an RS485/Modbus sensor as the industrial hardware extension.
 
 ## ESP32 hardware validation
 
@@ -146,6 +148,11 @@ sampled from the SHT30 every two seconds:
 ![Real ESP32 and SHT30 telemetry received by EdgeLink](docs/images/esp32-real-telemetry.png)
 
 ## Ubuntu validation
+
+The physical ESP32 registering and streaming SHT30 measurements to the non-blocking
+Linux `epoll` gateway:
+
+![Physical ESP32 telemetry received by the Ubuntu epoll gateway](docs/images/ubuntu-esp32-telemetry.png)
 
 Gateway receiving device telemetry:
 
